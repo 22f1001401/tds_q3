@@ -7,9 +7,9 @@ import { useClick } from '@/shared/hooks/useAudio';
 import { Joystick, Palette, Wand2 } from 'lucide-react';
 
 const ACTIVE_SECTION_OFFSET = 156;
+const NAV_CLICK_SUPPRESSION_MS = 3000;
 const SCROLL_TIMEOUT_MS = 350;
 const SCROLL_CONTAINER_SELECTOR = '[data-scroll-restoration-id="container"]';
-const TARGET_REACHED_TOLERANCE_PX = 4;
 
 type SectionId = 'behavior' | 'display' | 'effects';
 
@@ -45,26 +45,11 @@ const getSectionElements = () =>
 const getScrollContainer = () =>
   document.querySelector(SCROLL_CONTAINER_SELECTOR) as HTMLElement | null;
 
-const hasSectionReachedTriggerLine = (
-  sectionId: SectionId,
-  scrollContainer: HTMLElement,
-) => {
-  const section = document.getElementById(sectionId);
-  if (!section) return true;
-
-  const triggerLine =
-    scrollContainer.getBoundingClientRect().top + ACTIVE_SECTION_OFFSET;
-
-  return (
-    section.getBoundingClientRect().top <=
-    triggerLine + TARGET_REACHED_TOLERANCE_PX
-  );
-};
-
 const PreferencesSectionNav = () => {
   const [activeSection, setActiveSection] = useState<SectionId>('behavior');
   const { playClick } = useClick();
-  const clickedSectionRef = useRef<SectionId | null>(null);
+  const suppressedSectionRef = useRef<SectionId | null>(null);
+  const suppressionTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -76,17 +61,14 @@ const PreferencesSectionNav = () => {
       const sectionElements = getSectionElements();
       if (sectionElements.length === 0) return;
 
-      if (clickedSectionRef.current) {
-        const sectionId = clickedSectionRef.current;
-
-        if (hasSectionReachedTriggerLine(sectionId, scrollContainer)) {
-          clickedSectionRef.current = null;
-        } else {
-          setActiveSection(currentSection =>
-            currentSection === sectionId ? currentSection : sectionId,
-          );
-          return;
-        }
+      if (suppressedSectionRef.current) {
+        const suppressedSection = suppressedSectionRef.current;
+        setActiveSection(currentSection =>
+          currentSection === suppressedSection
+            ? currentSection
+            : suppressedSection,
+        );
+        return;
       }
 
       const triggerLine =
@@ -116,6 +98,9 @@ const PreferencesSectionNav = () => {
     window.addEventListener('resize', updateActiveSection);
 
     return () => {
+      if (suppressionTimeoutRef.current) {
+        window.clearTimeout(suppressionTimeoutRef.current);
+      }
       scrollContainer.removeEventListener('scroll', updateActiveSection);
       window.removeEventListener('resize', updateActiveSection);
     };
@@ -132,7 +117,11 @@ const PreferencesSectionNav = () => {
     const scrollContainer = getScrollContainer();
     if (!section || !scrollContainer) return;
 
-    clickedSectionRef.current = sectionId;
+    if (suppressionTimeoutRef.current) {
+      window.clearTimeout(suppressionTimeoutRef.current);
+    }
+
+    suppressedSectionRef.current = sectionId;
     setActiveSection(sectionId);
 
     const containerRect = scrollContainer.getBoundingClientRect();
@@ -146,6 +135,11 @@ const PreferencesSectionNav = () => {
       top: Math.max(0, targetTop),
       behavior: 'smooth',
     });
+
+    suppressionTimeoutRef.current = window.setTimeout(() => {
+      suppressedSectionRef.current = null;
+      suppressionTimeoutRef.current = null;
+    }, NAV_CLICK_SUPPRESSION_MS);
 
     window.setTimeout(() => {
       window.history.replaceState(null, '', `#${sectionId}`);
